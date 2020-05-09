@@ -66,11 +66,7 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
   endif
 
   % load bone descriptives from file
-  BD = csvread(descriptives);
-  mean = BD(2,[2:end]);
-  StdDev = BD(3,[2:end]);
-  lbound = BD(4,[2:end]);
-  ubound = BD(5,[2:end]);
+  load(descriptives);
 
   % load left and right side element data
   left_sample = csvread(left_side);
