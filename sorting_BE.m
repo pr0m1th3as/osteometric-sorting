@@ -1,4 +1,5 @@
-% Copyright (C) 2020 Andreas Bertsatos <abertsatos@biol.uoa.gr>
+% Copyright (C) 2024 Andreas Bertsatos <abertsatos@biol.uoa.gr>
+% Copyright (C) 2024 Nefeli Garoufi <nefeligar@biol.uoa.gr>
 %
 % This program is free software; you can redistribute it and/or modify it under
 % the terms of the GNU General Public License as published by the Free Software
@@ -65,15 +66,25 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
     return;
   endif
 
+  % load the io package
+  pkg load io
   % load bone descriptives from file
-  load(descriptives);
+  if descriptives(length(descriptives)-3:end) == ".mat"
+    load(descriptives)
+  elseif descriptives(length(descriptives)-3:end) == ".csv"
+    desc = csv2cell(descriptives);
+    mean = cell2mat(desc(2,2:end));
+    StdDev = cell2mat(desc(3,2:end));
+    lbound = cell2mat(desc(4,2:end));
+    ubound = cell2mat(desc(5,2:end));
+  endif
 
   % load left and right side element data
-  left_sample = csvread(left_side);
+  left_sample = csv2cell(left_side);
   left_sample(1,:) = [];
   left_sample_list = left_sample(:,1);
   left_sample_size = length(left_sample_list);
-  right_sample = csvread(right_side);
+  right_sample = csv2cell(right_side);
   right_sample(1,:)= [];
   right_sample_list = right_sample(:,1);
   right_sample_size = length(right_sample_list);
@@ -81,13 +92,14 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
 
   % create a testing matrix
   TestDATA = suffle(left_sample, right_sample);
+  TestDATA_num = cell2mat(TestDATA(:,3:end));
 
   % for every individual variable find the definite mismatches and append them to the reject list
   rejected = [];
   for var=1:length(lbound)
-    rej_indx = unique(find(TestDATA(:,var+2) < lbound(var)));
+    rej_indx = unique(find(TestDATA_num(:,var) < lbound(var)));
     rejected = [rejected; rej_indx];
-    rej_indx = unique(find(TestDATA(:,var+2) > ubound(var)));
+    rej_indx = unique(find(TestDATA_num(:,var) > ubound(var)));
     rejected = [rejected; rej_indx];
     rejected = unique(rejected);
   endfor
@@ -95,6 +107,7 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
   % remove all rejected pairs from the data set and make a list of plausible matches
   plausible = TestDATA;
   plausible(rejected,:) = [];
+  plausible_num = cell2mat(plausible(:,3));
   definite_mismatched_pairs = length(rejected);
 
   % if all possible matches have been rejected, create the sorted list according to the input samples
@@ -133,8 +146,8 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
   % to find potential samples belonging to individuals, who are represented by a single side element
   index = 0;
   for i=1:length(plausible(:,1))
-    left_sample_list(left_sample_list == plausible(i,1)) = [];
-    right_sample_list(right_sample_list == plausible(i,2)) = [];
+    left_sample_list(strcmp(left_sample_list, plausible(i,1))==1) = [];
+    right_sample_list(strcmp(right_sample_list, plausible(i,2))==1) = [];
   endfor
   sorted = [];
   for i=1:length(left_sample_list)
@@ -146,36 +159,36 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
   % calculate the number of single elements sorted by mutual exclusion
   sorted_by_elimination = size(sorted,1);
   % calculate the sum of absolute z-scores for each paired samples in the testing pool
-  testing = [plausible(:,[1:2]), sum((abs((plausible(:,[3:end]) - mean) ./ StdDev)), 2)];
+  testing = [plausible(:,[1:2]), num2cell(sum((abs((plausible_num(:,[1:end]) - mean) ./ StdDev)), 2))];
 
-  % scan through the remaining testing cases and cluster the associated pairs into separate subgroups
+  % scan through the remaining testing cases and clust the associated pairs into separate subgroups
   % for each side of bones
-  cluster = cluster_pairs(testing);
+  clust = clust_pairs(testing);
 
   % compare the scores of every element with each paired association between both sides and keep
   % the matching pairs as a sorted pair when both sides exhibit the lowest score on the same matched
   % pair and the score is progressively below 30
-  [sorted, cluster] = compare_scores_with_threshold(sorted, cluster);
+  [sorted, clust] = compare_scores_with_threshold(sorted, clust);
 
   % calculate the number of pairs sorted by lowest score below 30
   sorted_by_score_threshold = size(sorted,1) - sorted_by_elimination;
 
-  % check if cluster exists and also contains any remaining plausible matches
-  if exist('cluster') && !isempty(cluster)
+  % check if clust exists and also contains any remaining plausible matches
+  if exist('clust') && !isempty(clust)
     s = 0;
-    for c=1:length(cluster)
-      s += size(cluster(c).left,1) + size(cluster(c).right,1);
+    for c=1:length(clust)
+      s += size(clust(c).left,1) + size(clust(c).right,1);
     endfor
     if s > 0
-      % scan through the remaining testing cases and cluster the associated pairs into separate
+      % scan through the remaining testing cases and clust the associated pairs into separate
       % subgroups for each side of bones
-      cluster = recluster_pairs(cluster);
+      clust = reclust_pairs(clust);
 
       % in each subgroup compare the scores of every element with each paired association between
       % both sides and keep the matching pairs as a sorted pair when both sides exhibit the lowest
       % score on the same matched pair and the score is lower than the second smaller one by at
       % least 5 units
-      [sorted, cluster] = compare_scores_with_difference(sorted, cluster);
+      [sorted, clust] = compare_scores_with_difference(sorted, clust);
 
       % calculate the number of pairs sorted by lowest score with difference above 5
       sorted_by_score_difference = size(sorted,1) - (sorted_by_elimination + sorted_by_score_threshold);
@@ -188,21 +201,24 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
     sorted_pairs = sorted_by_score_threshold;
   endif
 
-  % check if cluster exists and also contains any remaining plausible matches and concatenate
+  % check if clust exists and also contains any remaining plausible matches and concatenate
   % the remaining unsorted pairs in a single matrix
-  if exist('cluster') && !isempty(cluster)
+  if exist('clust') && !isempty(clust)
     unsorted = [];
-    for c=1:length(cluster)
-      unsorted = [unsorted; cluster(c).left; cluster(c).right];
+    for c=1:length(clust)
+      unsorted = [unsorted; clust(c).left; clust(c).right]
     endfor
-    unsorted = unique(unsorted, "rows");
+    uns_str = strcat(unsorted(:,1), unsorted(:,2));
+    [~, idx_uns] = unique(uns_str);
+    unsorted = unsorted(idx_uns, :);
   else
     unsorted = [];
   endif
   unsorted_pairs = size(unsorted,1);
-    
+
   % calculate the total number of sorted elements and distinct individuals identified
-  sorted_elements = sum(sum(isfinite(sorted(:,[1:2]))));
+  % sorted_elements = sum(sum(isfinite(sorted(:,[1:2]))));
+  sorted_elements = length(sorted) - sum(sum(cellfun(@isnumeric, sorted(:,[1:2]))));
   individuals = size(sorted,1);
 
   % report the sorting performance statistics
@@ -226,6 +242,22 @@ function [varargout] = sorting_BE(descriptives, left_side, right_side)
                     individuals, unsorted_pairs, definite_mismatched_pairs};
     varargout{3} = unsorted;
   endif
+
+%  print the results in the respective csv files
+sorted_col_names = {"Left Side", "Right Side", "Score"};
+  if nargout == 1
+    cell2csv("sorted.csv", [sorted_col_names; varargout{1}]);
+  elseif nargout == 2
+    cell2csv("sorted.csv", [sorted_col_names; varargout{1}]);
+    cell2csv("stats.csv", varargout{2});
+  elseif nargout == 3
+    cell2csv("sorted.csv", [sorted_col_names; varargout{1}]);
+    cell2csv("stats.csv", varargout{2});
+    if !isempty(varargout{3})
+      cell2csv("unsorted.csv", varargout{3});
+    else printf("No unsorted pairs were found. Therefore, the unsorted.csv file was not printed. \n");
+    endif
+  endif
 endfunction
 
 
@@ -234,36 +266,39 @@ function TestDATA = suffle(A, B)
   % side. Return a testing data set with the first column containing the index of the left side and
   % the second column containing the right side.
   index = 0;
+  A_num = cell2mat(A(:,2:end));
+  B_num = cell2mat(B(:, 2:end));
   for i=1:length(A(:,1))
     for k=1:length(B(:,1))
       index += 1;
       % for each possible match extract the respective variable vector from each side, calculate
       % the element-wise difference of absolute values and append it in the returning testing data
-      Lvec = abs(A(i,[2:end]));
-      Rvec = abs(B(k,[2:end]));
+      Lvec = abs(A_num(i,:));
+      Rvec = abs(B_num(k,:));
       match = Lvec - Rvec;
       TestDATA(index,:) = [A(i), B(k), match];
     endfor
   endfor
 endfunction
 
-function	cluster = cluster_pairs(testing);
-  % scan through the plausible paired matches and cluster the associated pairs
+function	clust = clust_pairs(testing);
+  % scan through the plausible paired matches and clust the associated pairs
   % into separate subgroups for each side of bones
   savelist = testing;
   group = 0;
   while (length(testing(:,1)) > 0)
-    group += 1; cluster(group).left = [];
+    group += 1; clust(group).left = [];
     complete = false;
     % find a sample with minimum occurence and use it as a seed
     samples = unique(testing(:,1));
     clear nsamples;
     for s=1:length(samples)
-      idx = find(testing(:,1) == samples(s));
+      #idx = find(testing(:,1) == samples(s));
+      idx = find(strcmp(testing(:,1), samples(s)) == 1);
       nsamples(s,:) = [length(idx), samples(s)];
     endfor
     nsamples = sortrows(nsamples, 1);
-    idx = find(testing(:,1) == nsamples(1,2));	
+    idx = find(strcmp(testing(:,1), nsamples(1,2)) == 1);
     left_seed(group) = testing(idx(1),1);
     right_seed(group) = testing(idx(1),2);
     left_samples = left_seed(group);
@@ -271,15 +306,15 @@ function	cluster = cluster_pairs(testing);
     while (!complete)
       % find occurences of right samples according to the left samples
       for i=1:length(left_samples)
-        idx = find(testing(:,1) == left_samples(i));
+        idx = find(strcmp(testing(:,1), left_samples(i)) == 1);
         right_samples = [right_samples; testing(idx,2)];
-        cluster(group).left = [cluster(group).left; testing(idx,:)];
+        clust(group).left = [clust(group).left; testing(idx,:)];
         testing(idx,:) = [];
       endfor
       k = 0;
       % find occurences of left samples according to the right samples
       for i=1:length(right_samples)
-        idx = find(testing(:,2) == right_samples(i));
+        idx = find(strcmp(testing(:,2), right_samples(i)) == 1);
         if !isempty(idx)
           left_samples = [left_samples; testing(idx,1)];
         else
@@ -294,22 +329,22 @@ function	cluster = cluster_pairs(testing);
   testing = savelist;
   group = 0;
   while (length(testing(:,2)) > 0)
-    group += 1; cluster(group).right = [];
+    group += 1; clust(group).right = [];
     complete = false;
     right_samples = right_seed(group);  %testing(1,3);
     left_samples = [];
     while (!complete)
       % find occurences of left samples according to the right samples
       for i=1:length(right_samples)
-        idx = find(testing(:,2) == right_samples(i));
+        idx = find(strcmp(testing(:,2), right_samples(i)) == 1);
         left_samples = [left_samples; testing(idx,1)];
-        cluster(group).right = [cluster(group).right; testing(idx,:)];
+        clust(group).right = [clust(group).right; testing(idx,:)];
         testing(idx,:) = [];
       endfor
       k = 0;
       % find occurences of right samples according to the left samples
       for i=1:length(left_samples)
-        idx = find(testing(:,1) == left_samples(i));
+        idx = find(strcmp(testing(:,1), left_samples(i)) == 1);
         if !isempty(idx)
           right_samples = [right_samples; testing(idx,2)];
         else
@@ -323,95 +358,95 @@ function	cluster = cluster_pairs(testing);
   endwhile
 endfunction
 
-function [sorted, cluster] = compare_scores_with_threshold(sorted, cluster);
+function [sorted, clust] = compare_scores_with_threshold(sorted, clust);
   % in each subgroup compare the scores of every element with each paired association between
   % both sides and keep the matching pairs as a sorted pair when both sides exhibit the lowest
   % score on the same matched pair and the score is progressively below 30
   for range=20:1:30
-    for c=1:length(cluster)
+    for c=1:length(clust)
       % make a list of unique elements
-      left_list = unique(cluster(c).left(:,1));
+      left_list = unique(clust(c).left(:,1));
       for s=1:length(left_list)
-        idx = find(cluster(c).left(:,1) == left_list(s));
+        idx = find(strcmp(clust(c).left(:,1), left_list(s)) == 1);
         if length(idx) > 0
-          left_side = cluster(c).left(idx,:);
+          left_side = clust(c).left(idx,:);
           left_side = sortrows(left_side, 3);
           right_sample = left_side(1,2);
-          idx = find(cluster(c).right(:,2) == right_sample);
-          right_side = cluster(c).right(idx,:);
+          idx = find(strcmp(clust(c).right(:,2), right_sample) ==1);
+          right_side = clust(c).right(idx,:);
           right_side = sortrows(right_side, 3);
-          score = right_side(1,3);
+          score = cell2mat(right_side(1,3));
           % check if elements in first rows (lowest scores) match (have the same sample indices)
           % if they match append the pair in the sorted list
-          if score < range && left_side(1,1) == right_side(1,1) && left_side(1,2) == right_side(1,2)
+          if score < range && strcmp(left_side(1,1), right_side(1,1)) == 1 && strcmp(left_side(1,2), right_side(1,2)) == 1
             sorted = [sorted; left_side(1,:)];
-            % exclude sorted elements from the cluster
-            idx = find(cluster(c).left(:,1) == left_side(1,1));
-            cluster(c).left(idx,:) = [];
-            idx = find(cluster(c).left(:,2) == left_side(1,2));
-            cluster(c).left(idx,:) = [];
-            idx = find(cluster(c).right(:,2) == right_side(1,2));
-            cluster(c).right(idx,:) = [];
-            idx = find(cluster(c).right(:,1) == right_side(1,1));
-            cluster(c).right(idx,:) = [];
+            % exclude sorted elements from the clust
+            idx = find(strcmp(clust(c).left(:,1), left_side(1,1)) ==1);
+            clust(c).left(idx,:) = [];
+            idx = find(strcmp(clust(c).left(:,2), left_side(1,2)) == 1);
+            clust(c).left(idx,:) = [];
+            idx = find(strcmp(clust(c).right(:,2), right_side(1,2))==1);
+            clust(c).right(idx,:) = [];
+            idx = find(strcmp(clust(c).right(:,1), right_side(1,1)) ==1);
+            clust(c).right(idx,:) = [];
           endif
         endif
       endfor
     endfor
     % check if any subgroup contains an identical single match and in such case consider it true match
-    % and append it in the sorted list and remove it from the cluster
-    for c=length(cluster):-1:1
-      if length(cluster(c).left(:,1)) == 1 && length(cluster(c).right(:,1)) == 1
-        left_side = cluster(c).left(1,:);
-        right_side = cluster(c).right(1,:);
-        if left_side(1,1) == right_side(1,1) && left_side(1,2) == right_side(1,2)
+    % and append it in the sorted list and remove it from the clust
+    for c=length(clust):-1:1
+      if length(clust(c).left(:,1)) == 1 && length(clust(c).right(:,1)) == 1
+        left_side = clust(c).left(1,:);
+        right_side = clust(c).right(1,:);
+        if strcmp(left_side(1,1), right_side(1,1)) ==1 && strcmp(left_side(1,2), right_side(1,2)) == 1
           sorted = [sorted; left_side(1,:)];
-          cluster(c) = [];
+          clust(c) = [];
         endif
       else
         index = 0;
-        for s=1:length(cluster(c).left(:,1))
-          left_sample = cluster(c).left(s,1);
-          right_sample = cluster(c).left(s,2);
-          if sum(cluster(c).left(:,1) == left_sample) == 1 && sum(cluster(c).left(:,2) == right_sample) == 1
+        for s=1:length(clust(c).left(:,1))
+          left_sample = clust(c).left(s,1);
+          right_sample = clust(c).left(s,2);
+          if sum(strcmp(clust(c).left(:,1), left_sample)) == 1 && sum(strcmp(clust(c).left(:,2), right_sample)) == 1
             index += 1;
-            sorted = [sorted; cluster(c).left(s,:)];
+            sorted = [sorted; clust(c).left(s,:)];
             remove(index) = s;
-            % remove from right cluster as well
-            idx = find(cluster(c).right(:,1) == left_sample);
-            cluster(c).right(idx,:) = [];
-            idx = find(cluster(c).right(:,2) == right_sample);
-            cluster(c).right(idx,:) = [];
-          endif	
+            % remove from right clust as well
+            idx = find(strcmp(clust(c).right(:,1), left_sample) == 1);
+            clust(c).right(idx,:) = [];
+            idx = find(strcmp(clust(c).right(:,2), right_sample) == 1);
+            clust(c).right(idx,:) = [];
+          endif
         endfor
         if exist("remove", "var")
-          cluster(c).left(remove,:) = []; clear remove;
+          clust(c).left(remove,:) = []; clear remove;
         endif
       endif
     endfor
   endfor
 endfunction
 
-function cluster2 = recluster_pairs(cluster)
-  % scan through the remaining testing cases and cluster the associated pairs into separate subgroups
+function clust2 = reclust_pairs(clust)
+  % scan through the remaining testing cases and clust the associated pairs into separate subgroups
   % for each side of bones
   Lgroup = 0; Rgroup = 0;
-  for c=1:length(cluster)
-    testing = cluster(c).left;
-    % scan through the remaining testing cases and cluster the associated pairs into separate subgroups
+  for c=1:length(clust)
+    testing = clust(c).left;
+    % scan through the remaining testing cases and clust the associated pairs into separate subgroups
     % for each side of bones
     while (length(testing(:,1)) > 0)
-      Lgroup += 1; cluster2(Lgroup).left = [];
+      Lgroup += 1; clust2(Lgroup).left = [];
       complete = false;
       % find a sample with minimum occurence and use it as a seed
       samples = unique(testing(:,1));
       clear nsamples;
       for s=1:length(samples)
-        idx = find(testing(:,1) == samples(s));
+        idx = find(strcmp(testing(:,1), samples(s)) == 1);
         nsamples(s,:) = [length(idx), samples(s)];
       endfor
       nsamples = sortrows(nsamples, 1);
-      idx = find(testing(:,1) == nsamples(1,2));	
+      idx = find(strcmp(testing(:,1), nsamples(1,2)) == 1);
       left_seed(Lgroup) = testing(idx(1),1);
       right_seed(Lgroup) = testing(idx(1),2);
       left_samples = left_seed(Lgroup);
@@ -419,15 +454,15 @@ function cluster2 = recluster_pairs(cluster)
       while (!complete)
         % find occurences of right samples according to the left samples
         for i=1:length(left_samples)
-          idx = find(testing(:,1) == left_samples(i));
+          idx = find(strcmp(testing(:,1), left_samples(i)) == 1);
           right_samples = [right_samples; testing(idx,2)];
-          cluster2(Lgroup).left = [cluster2(Lgroup).left; testing(idx,:)];
+          clust2(Lgroup).left = [clust2(Lgroup).left; testing(idx,:)];
           testing(idx,:) = [];
         endfor
         k = 0;
         % find occurences of left samples according to the right samples
         for i=1:length(right_samples)
-          idx = find(testing(:,2) == right_samples(i));
+          idx = find(strcmp(testing(:,2), right_samples(i)) == 1);
           if !isempty(idx)
             left_samples = [left_samples; testing(idx,1)];
           else
@@ -439,24 +474,24 @@ function cluster2 = recluster_pairs(cluster)
         endif
       endwhile
     endwhile
-    testing = cluster(c).right;
+    testing = clust(c).right;
     while (length(testing(:,2)) > 0)
-      Rgroup += 1; cluster2(Rgroup).right = [];
+      Rgroup += 1; clust2(Rgroup).right = [];
       complete = false;
       right_samples = right_seed(Rgroup);
       left_samples = [];
       while (!complete)
         % find occurences of left samples according to the right samples
         for i=1:length(right_samples)
-          idx = find(testing(:,2) == right_samples(i));
+          idx = find(strcmp(testing(:,2), right_samples(i)) == 1);
           left_samples = [left_samples; testing(idx,1)];
-          cluster2(Rgroup).right = [cluster2(Rgroup).right; testing(idx,:)];
+          clust2(Rgroup).right = [clust2(Rgroup).right; testing(idx,:)];
           testing(idx,:) = [];
         endfor
         k = 0;
         % find occurences of right samples according to the left samples
         for i=1:length(left_samples)
-          idx = find(testing(:,1) == left_samples(i));
+          idx = find(strcmp(testing(:,1), left_samples(i)) == 1);
           if !isempty(idx)
             right_samples = [right_samples; testing(idx,2)];
           else
@@ -471,84 +506,89 @@ function cluster2 = recluster_pairs(cluster)
   endfor
 endfunction
 
-function [sorted, cluster] = compare_scores_with_difference(sorted, cluster)
+function [sorted, clust] = compare_scores_with_difference(sorted, clust)
   % in each subgroup compare the scores of every element with each paired association between both
   % sides and keep the matching pairs as a sorted pair when both sides exhibit the lowest score
   % on the same matched pair and the score is lower than the second smaller one by at least 5 units
   for t=1:2
-    for c=length(cluster):-1:1
+    for c=length(clust):-1:1
       % make a list of unique elements
-      left_list = unique(cluster(c).left(:,1));
+      left_list = unique(clust(c).left(:,1));
       for s=1:length(left_list)
-        idxL = find(cluster(c).left(:,1) == left_list(s));
-        idxR = find(cluster(c).right(:,2) == left_list(s));
+        idxL = find(strcmp(clust(c).left(:,1), left_list(s)) == 1);
+        idxR = find(strcmp(clust(c).right(:,2), left_list(s)) == 1);
         if length(idxL) > 0 && length(idxR) > 0
-          left_side = cluster(c).left(idxL,:);
-          right_side = cluster(c).right(idxR,:);
+          left_side = clust(c).left(idxL,:);
+          right_side = clust(c).right(idxR,:);
           % if multiple pairs are present on right side only, use it explicitly
           if length(right_side(:,1)) > 1 && length(left_side(:,1)) == 1
             left_side = sortrows(left_side, 3);
             right_side = sortrows(right_side, 3);
-            score_diff = abs(right_side(1,3) - right_side(2,3));
-            if score_diff > 5 && left_side(1,1) == right_side(1,1) && left_side(1,2) == right_side(1,2)
+            right_side_num = cell2mat(right_side(:,3));
+            % score_diff = abs(right_side(1,3) - right_side(2,3));
+            score_diff = abs(right_side_num(1,1) - right_side_num(2,1));
+            if score_diff > 5 && strcmp(left_side(1,1), right_side(1,1)) == 1 && strcmp(left_side(1,2), right_side(1,2)) == 1
               sorted = [sorted; left_side(1,:)];
-              % exclude sorted elements from the cluster
-              idx = find(cluster(c).left(:,1) == left_side(1,1));
-              cluster(c).left(idx,:) = [];
-              idx = find(cluster(c).left(:,2) == left_side(1,2));
-              cluster(c).left(idx,:) = [];
-              idx = find(cluster(c).right(:,2) == right_side(1,2));
-              cluster(c).right(idx,:) = [];
-              idx = find(cluster(c).right(:,1) == right_side(1,1));
-              cluster(c).right(idx,:) = [];
+              % exclude sorted elements from the clust
+              idx = find(strcmp(clust(c).left(:,1), left_side(1,1)) == 1);
+              clust(c).left(idx,:) = [];
+              idx = find(strcmp(clust(c).left(:,2), left_side(1,2)) == 1);
+              clust(c).left(idx,:) = [];
+              idx = find(strcmp(clust(c).right(:,2), right_side(1,2)) == 1);
+              clust(c).right(idx,:) = [];
+              idx = find(strcmp(clust(c).right(:,1), right_side(1,1)) == 1);
+              clust(c).right(idx,:) = [];
             endif
           % if multiple pairs are present on left side only, use it explicitly
           elseif length(left_side(:,1)) > 1 && length(right_side(:,1)) == 1
             left_side = sortrows(left_side, 3);
+            left_side_num = cell2mat(right_side(:,3));
             right_side = sortrows(right_side, 3);
-            score_diff = abs(left_side(1,3) - left_side(2,3));
-            if score_diff > 5 && left_side(1,1) == right_side(1,1) && left_side(1,2) == right_side(1,2)
+            score_diff = abs(left_side_num(1,1) - left_side_num(2,1));
+            if score_diff > 5 && strcmp(left_side(1,1), right_side(1,1)) == 1 && strcmp(left_side(1,2), right_side(1,2)) == 1
               sorted = [sorted; left_side(1,:)];
-              % exclude sorted elements from the cluster
-              idx = find(cluster(c).left(:,1) == left_side(1,1));
-              cluster(c).left(idx,:) = [];
-              idx = find(cluster(c).left(:,2) == left_side(1,2));
-              cluster(c).left(idx,:) = [];
-              idx = find(cluster(c).right(:,2) == right_side(1,2));
-              cluster(c).right(idx,:) = [];
-              idx = find(cluster(c).right(:,1) == right_side(1,1));
-              cluster(c).right(idx,:) = [];
+              % exclude sorted elements from the clust
+              idx = find(strcmp(clust(c).left(:,1), left_side(1,1)) == 1);
+              clust(c).left(idx,:) = [];
+              idx = find(strcmp(clust(c).left(:,2), left_side(1,2)) == 1);
+              clust(c).left(idx,:) = [];
+              idx = find(strcmp(clust(c).right(:,2), right_side(1,2)) == 1);
+              clust(c).right(idx,:) = [];
+              idx = find(strcmp(clust(c).right(:,1) == right_side(1,1)) == 1);
+              clust(c).right(idx,:) = [];
             endif
           % if multiple pairs are present on both sides, find the minimum difference from either side
           elseif length(left_side(:,1)) > 1 && length(right_side(:,1)) > 1
             left_side = sortrows(left_side, 3);
+            left_side_num = cell2mat(left_side(:,3));
             right_side = sortrows(right_side, 3);
-            score_L = abs(left_side(1,3) - left_side(2,3));
-            score_R = abs(right_side(1,3) - right_side(2,3));
+            right_side_num = cell2mat(right_side(:,3));
+            score_L = abs(left_side_num(1,1) - left_side_num(2,1));
+            score_R = abs(right_side_num(1,1) - right_side_num(2,1));
             score_diff = min([score_L, score_R]);
-            if score_diff > 5 && left_side(1,1) == right_side(1,1) && left_side(1,2) == right_side(1,2)
+            if score_diff > 5 && strcmp(left_side(1,1), right_side(1,1)) == 1 && strcmp(left_side(1,2), right_side(1,2)) == 1
               sorted = [sorted; left_side(1,:)];
-              % exclude sorted elements from the cluster
-              idx = find(cluster(c).left(:,1) == left_side(1,1));
-              cluster(c).left(idx,:) = [];
-              idx = find(cluster(c).left(:,2) == left_side(1,2));
-              cluster(c).left(idx,:) = [];
-              idx = find(cluster(c).right(:,2) == right_side(1,2));
-              cluster(c).right(idx,:) = [];
-              idx = find(cluster(c).right(:,1) == right_side(1,1));
-              cluster(c).right(idx,:) = [];
+              % exclude sorted elements from the clust
+              idx = find(strcmp(clust(c).left(:,1), left_side(1,1)) == 1);
+              clust(c).left(idx,:) = [];
+              idx = find(strcmp(clust(c).left(:,2), left_side(1,2)) == 1);
+              clust(c).left(idx,:) = [];
+              idx = find(strcmp(clust(c).right(:,2), right_side(1,2)) == 1);
+              clust(c).right(idx,:) = [];
+              idx = find(strcmp(clust(c).right(:,1), right_side(1,1)) == 1);
+              clust(c).right(idx,:) = [];
             endif
           else
             sorted = [sorted; left_side(1,:)];
-            % exclude sorted elements from the cluster
-            idx = find(cluster(c).left(:,1) == left_side(1,1));
-            cluster(c).left(idx,:) = [];
-            idx = find(cluster(c).left(:,2) == left_side(1,2));
-            cluster(c).left(idx,:) = [];
-            idx = find(cluster(c).right(:,2) == right_side(1,2));
-            cluster(c).right(idx,:) = [];
-            idx = find(cluster(c).right(:,1) == right_side(1,1));
-            cluster(c).right(idx,:) = [];
+            % exclude sorted elements from the clust
+            idx = find(strcmp(clust(c).left(:,1), left_side(1,1)) == 1);
+            clust(c).left(idx,:) = [];
+            idx = find(strcmp(clust(c).left(:,2), left_side(1,2)) == 1);
+            clust(c).left(idx,:) = [];
+            idx = find(strcmp(clust(c).right(:,2), right_side(1,2)) == 1);
+            clust(c).right(idx,:) = [];
+            idx = find(strcmp(clust(c).right(:,1) == right_side(1,1)) == 1);
+            clust(c).right(idx,:) = [];
           endif
         endif
       endfor
