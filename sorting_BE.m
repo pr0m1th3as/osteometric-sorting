@@ -1,4 +1,4 @@
-% Copyright (C) 2020 Andreas Bertsatos <abertsatos@biol.uoa.gr>
+% Copyright (C) 2024 Andreas Bertsatos <abertsatos@biol.uoa.gr>
 % Copyright (C) 2024 Nefeli Garoufi <nefeligar@biol.uoa.gr>
 %
 % This program is free software; you can redistribute it and/or modify it under
